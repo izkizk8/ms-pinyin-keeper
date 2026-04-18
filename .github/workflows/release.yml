@@ -52,28 +52,18 @@ jobs:
           ls ahk-extracted
 
       - name: Run unit tests
-        shell: bash
+        shell: pwsh
         run: |
-          cp ahk-extracted/AutoHotkey64.exe ./AutoHotkey64.exe
-          rm -f tests/test_results.log
-          ./AutoHotkey64.exe /ErrorStdOut tests/keeper_test.ahk &
-          AHK_PID=$!
-          # AHK is a GUI process; wait up to 30s for it to exit.
-          for i in $(seq 1 60); do
-            if ! kill -0 "$AHK_PID" 2>/dev/null; then break; fi
-            sleep 0.5
-          done
-          if kill -0 "$AHK_PID" 2>/dev/null; then
-            echo "::error::Tests timed out"
-            kill -9 "$AHK_PID" || true
-            exit 1
-          fi
-          wait "$AHK_PID"
-          RC=$?
-          echo "----- test results -----"
-          cat tests/test_results.log || true
-          echo "------------------------"
-          exit "$RC"
+          Copy-Item ahk-extracted/AutoHotkey64.exe ./AutoHotkey64.exe
+          Remove-Item tests/test_results.log -ErrorAction SilentlyContinue
+          $p = Start-Process -PassThru -Wait ./AutoHotkey64.exe -ArgumentList 'tests\keeper_test.ahk'
+          Write-Host "----- test results -----"
+          if (Test-Path tests/test_results.log) { Get-Content tests/test_results.log }
+          Write-Host "------------------------"
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::error::Tests failed with exit code $($p.ExitCode)"
+            exit $p.ExitCode
+          }
 
       - name: Assemble release
         shell: bash
