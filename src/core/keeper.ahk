@@ -1,62 +1,75 @@
 ; ============================================================================
 ; Keeper — global EN/CN memory for Microsoft Pinyin
 ;
-; Premise: Microsoft Pinyin resets to CN on every window focus change.
-; We track the user's last-chosen mode in a single boolean (g_DesiredEN)
-; and, on every focus change, send a real {LShift} if needed to flip
-; the new window from Pinyin's just-applied CN back to EN.
+; Model:
+;   - One bool g_DesiredEN persisted to ini.
+;   - User Shift -> flip g_DesiredEN (we mirror their toggle).
+;   - On focus change OR right after a user Shift, write the desired mode
+;     directly to the focused window's IME via WM_IME_CONTROL /
+;     IMC_SETCONVERSIONMODE. This is silent and idempotent — re-applying
+;     "EN" to a window already in EN is a no-op, so it doesn't cause the
+;     "random toggle" bug that Send Shift had.
+;   - We re-apply for ~600ms after each event to win the race against
+;     Pinyin's own per-window reset.
 ;
-; No IME state reading — that path doesn't work for TSF Pinyin and was
-; the source of all earlier bugs. The model is: user toggles via Shift,
-; we mirror that toggle, and re-apply it whenever focus changes.
+; No state reading: TSF-based Microsoft Pinyin doesn't answer the read,
+; so we never know the current mode. Idempotent SET doesn't need to know.
 ; ============================================================================
 
-global g_DesiredEN          := false   ; true = English, false = Chinese
-global g_KeeperRunning      := true
-global g_PrevHwnd           := 0
-global g_LastInternalSendMs := 0
+global g_DesiredEN         := false
+global g_KeeperRunning     := true
+global g_PrevHwnd          := 0
+global g_ReapplyUntilMs    := 0
 
 KeeperInit() {
     global g_DesiredEN, g_PrevHwnd
     g_DesiredEN := (ConfigGet("desired_en", "0") = "1")
     try g_PrevHwnd := WinGetID("A")
-
     Hotkey("~LShift", KeeperOnUserShift)
     Hotkey("~RShift", KeeperOnUserShift)
-    SetTimer(KeeperWatchFocus, 100)
+    SetTimer(KeeperTick, 80)
     KeeperLog("init: desired=" . (g_DesiredEN ? "EN" : "CN"))
 }
 
-; The user pressed Shift themselves -> they toggled the IME.
-; AHK's hook ignores its own SendInput, so this only fires for real keys.
 KeeperOnUserShift(*) {
-    global g_DesiredEN, g_KeeperRunning, g_LastInternalSendMs
+    global g_DesiredEN, g_KeeperRunning, g_ReapplyUntilMs
     if !g_KeeperRunning
-        return
-    ; Belt-and-suspenders: also ignore a brief window after our own send.
-    if (A_TickCount - g_LastInternalSendMs < 250)
         return
     g_DesiredEN := !g_DesiredEN
     ConfigSet("desired_en", g_DesiredEN ? "1" : "0")
-    KeeperLog("user toggled -> " . (g_DesiredEN ? "EN" : "CN"))
+    KeeperLog("user shift -> " . (g_DesiredEN ? "EN" : "CN"))
+    ; Reaffirm for a moment so Pinyin's own handler doesn't undo us.
+    g_ReapplyUntilMs := A_TickCount + 400
 }
 
-KeeperWatchFocus() {
-    global g_PrevHwnd, g_DesiredEN, g_KeeperRunning, g_LastInternalSendMs
+KeeperTick() {
+    global g_PrevHwnd, g_ReapplyUntilMs, g_KeeperRunning, g_DesiredEN
     if !g_KeeperRunning
         return
     hwnd := 0
     try hwnd := WinGetID("A")
-    if (!hwnd || hwnd = g_PrevHwnd)
+    if !hwnd
         return
-    g_PrevHwnd := hwnd
-    KeeperLog("focus -> " . hwnd . " (" . KeeperWinTitle(hwnd) . "); desired=" . (g_DesiredEN ? "EN" : "CN"))
-    ; Pinyin just reset this new window to CN. If we want EN, flip it.
-    if g_DesiredEN {
-        g_LastInternalSendMs := A_TickCount
-        try Send("{Blind}{LShift}")
-        KeeperLog("  sent Shift to restore EN")
+    if (hwnd != g_PrevHwnd) {
+        g_PrevHwnd := hwnd
+        g_ReapplyUntilMs := A_TickCount + 600
+        KeeperLog("focus -> " . hwnd . " (" . KeeperWinTitle(hwnd) . "); desired=" . (g_DesiredEN ? "EN" : "CN"))
     }
+    if (A_TickCount < g_ReapplyUntilMs)
+        ApplyDesiredMode(hwnd)
+}
+
+; Write the desired conversion mode directly to the IME of the given window.
+; Silent + idempotent: writing "CN" to a window already in CN is a no-op.
+ApplyDesiredMode(hwnd) {
+    global g_DesiredEN
+    hIME := DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", hwnd, "Ptr")
+    if !hIME
+        return false
+    ; IME_CMODE_NATIVE = 1 (Chinese), 0 = English alphanumeric.
+    mode := g_DesiredEN ? 0 : 1
+    try SendMessage(0x283, 0x002, mode, , "ahk_id " . hIME, , , , 100)
+    return true
 }
 
 KeeperWinTitle(hwnd) {
@@ -75,19 +88,6 @@ KeeperToggle() {
 KeeperIsRunning() {
     global g_KeeperRunning
     return g_KeeperRunning
-}
-
-KeeperGetDesired() {
-    global g_DesiredEN
-    return g_DesiredEN
-}
-
-; Manual override: tray menu can let user resync without pressing Shift.
-KeeperSetDesired(en) {
-    global g_DesiredEN
-    g_DesiredEN := !!en
-    ConfigSet("desired_en", g_DesiredEN ? "1" : "0")
-    KeeperLog("desired set to " . (g_DesiredEN ? "EN" : "CN") . " (manual)")
 }
 
 KeeperLog(msg) {
