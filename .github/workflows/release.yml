@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read AHK version
+        id: ahk
+        shell: bash
+        run: |
+          VER=$(cat ahk-version.txt | tr -d '[:space:]')
+          PURE=${VER#v}
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "pure=$PURE"   >> "$GITHUB_OUTPUT"
+
+      - name: Determine app version from tag
+        id: ver
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          APPVER=${TAG#v}
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "app=$APPVER"  >> "$GITHUB_OUTPUT"
+
+      - name: Verify src/version.txt matches tag
+        shell: bash
+        run: |
+          FILE_VER=$(cat src/version.txt | tr -d '[:space:]')
+          if [ "$FILE_VER" != "${{ steps.ver.outputs.app }}" ]; then
+            echo "::error::src/version.txt ($FILE_VER) != tag (${{ steps.ver.outputs.app }})"
+            exit 1
+          fi
+
+      - name: Download AutoHotkey ${{ steps.ahk.outputs.version }}
+        shell: bash
+        run: |
+          URL="https://www.autohotkey.com/download/2.0/AutoHotkey_${{ steps.ahk.outputs.pure }}.zip"
+          echo "Downloading $URL"
+          curl -fsSL -o ahk.zip "$URL"
+          mkdir ahk-extracted
+          unzip -q ahk.zip -d ahk-extracted
+          ls ahk-extracted
+
+      - name: Assemble release
+        shell: bash
+        run: |
+          NAME="ms-pinyin-keeper-${{ steps.ver.outputs.tag }}"
+          mkdir -p "dist/$NAME/src/AutoHotkey"
+          cp -r src/* "dist/$NAME/src/"
+          cp App.bat README.md LICENSE "dist/$NAME/"
+          cp ahk-extracted/AutoHotkey64.exe "dist/$NAME/src/AutoHotkey/"
+          cd dist
+          7z a "$NAME.zip" "$NAME" >/dev/null
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ms-pinyin-keeper-${{ steps.ver.outputs.tag }}.zip
+          generate_release_notes: true

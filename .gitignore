@@ -1,0 +1,15 @@
+# Build output
+dist/
+*.zip
+
+# AHK runtime — downloaded by CI, never committed
+src/AutoHotkey/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# Local
+config.ini
