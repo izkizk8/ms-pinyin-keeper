@@ -55,8 +55,25 @@ jobs:
         shell: bash
         run: |
           cp ahk-extracted/AutoHotkey64.exe ./AutoHotkey64.exe
-          ./AutoHotkey64.exe /ErrorStdOut tests/keeper_test.ahk
-          echo "tests exit=$?"
+          rm -f tests/test_results.log
+          ./AutoHotkey64.exe /ErrorStdOut tests/keeper_test.ahk &
+          AHK_PID=$!
+          # AHK is a GUI process; wait up to 30s for it to exit.
+          for i in $(seq 1 60); do
+            if ! kill -0 "$AHK_PID" 2>/dev/null; then break; fi
+            sleep 0.5
+          done
+          if kill -0 "$AHK_PID" 2>/dev/null; then
+            echo "::error::Tests timed out"
+            kill -9 "$AHK_PID" || true
+            exit 1
+          fi
+          wait "$AHK_PID"
+          RC=$?
+          echo "----- test results -----"
+          cat tests/test_results.log || true
+          echo "------------------------"
+          exit "$RC"
 
       - name: Assemble release
         shell: bash

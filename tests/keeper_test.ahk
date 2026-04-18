@@ -19,12 +19,11 @@ total    := 0
 Assert(name, got, want) {
     global failures, total
     total += 1
-    if (got = want) {
-        FileAppend("ok   - " . name . "`n", "*")
-    } else {
+    line := (got = want ? "ok   - " : "FAIL - ") . name
+        . " got=" . got . " want=" . want . "`n"
+    if (got != want)
         failures += 1
-        FileAppend("FAIL - " . name . " got=" . got . " want=" . want . "`n", "*")
-    }
+    FileAppend(line, A_ScriptDir . "\test_results.log", "UTF-8")
 }
 
 Assert("CN(1)->EN basic",            KeeperComputeNewMode(1, 0),       0)
@@ -37,8 +36,8 @@ Assert("desired native via 1024",    KeeperComputeNewMode(1, 1024),    0)
 Assert("desired native via 1025",    KeeperComputeNewMode(0, 1025),    1)
 
 if (failures > 0) {
-    FileAppend("`n" . failures . "/" . total . " tests FAILED`n", "*")
+    FileAppend("`n" . failures . "/" . total . " tests FAILED`n", A_ScriptDir . "\test_results.log", "UTF-8")
     ExitApp(1)
 }
-FileAppend("`nAll " . total . " tests passed.`n", "*")
+FileAppend("`nAll " . total . " tests passed.`n", A_ScriptDir . "\test_results.log", "UTF-8")
 ExitApp(0)
