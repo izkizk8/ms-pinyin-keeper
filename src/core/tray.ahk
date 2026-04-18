@@ -24,6 +24,28 @@ TrayInit() {
     M.Add()
     M.Add("About", (*) => TrayAbout())
     M.Add("Exit", (*) => ExitApp())
+
+    ; AHK_NOTIFYICON = 0x404; intercept tray clicks so left-click toggles
+    ; pause/resume (Menu.Default in AHK v2 only fires on double-click).
+    OnMessage(0x404, TrayOnNotify)
+}
+
+; lParam tells us which mouse event happened on the tray icon.
+;   WM_LBUTTONUP   = 0x202
+;   WM_LBUTTONDBLCLK = 0x203
+;   WM_RBUTTONUP   = 0x205
+TrayOnNotify(wParam, lParam, msg, hwnd) {
+    static WM_LBUTTONUP := 0x202
+    static WM_RBUTTONUP := 0x205
+    if (lParam = WM_LBUTTONUP) {
+        TrayToggle()
+        return 0
+    }
+    if (lParam = WM_RBUTTONUP) {
+        try A_TrayMenu.Show()
+        return 0
+    }
+    ; Let AHK handle other notifications (double-click → Default item, etc.)
 }
 
 TrayNoop(*) {
@@ -33,13 +55,15 @@ TrayUpdateIcon() {
     global APP_NAME, APP_VERSION
     A_IconTip := APP_NAME . " v" . APP_VERSION
         . (KeeperIsRunning() ? " (running)" : " (paused)")
+    ; Visually indicate paused state by hiding the tray icon's animation —
+    ; AHK has no built-in "gray" icon, so we rely on tooltip + balloon.
 }
 
 TrayToggle() {
     global APP_NAME
     running := KeeperToggle()
     TrayUpdateIcon()
-    TrayTip(running ? "Resumed" : "Paused", APP_NAME, 0x10)
+    try TrayTip(running ? "Resumed" : "Paused", APP_NAME, 0x10)
 }
 
 TrayToggleAutostart() {
