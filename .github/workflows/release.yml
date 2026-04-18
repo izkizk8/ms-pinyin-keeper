@@ -44,7 +44,7 @@ jobs:
       - name: Download AutoHotkey ${{ steps.ahk.outputs.version }}
         shell: bash
         run: |
-          URL="https://www.autohotkey.com/download/2.0/AutoHotkey_${{ steps.ahk.outputs.pure }}.zip"
+          URL="https://github.com/AutoHotkey/AutoHotkey/releases/download/${{ steps.ahk.outputs.version }}/AutoHotkey_${{ steps.ahk.outputs.pure }}.zip"
           echo "Downloading $URL"
           curl -fsSL -o ahk.zip "$URL"
           mkdir ahk-extracted
