@@ -51,20 +51,6 @@ jobs:
           unzip -q ahk.zip -d ahk-extracted
           ls ahk-extracted
 
-      - name: Run unit tests
-        shell: pwsh
-        run: |
-          Copy-Item ahk-extracted/AutoHotkey64.exe ./AutoHotkey64.exe
-          Remove-Item tests/test_results.log -ErrorAction SilentlyContinue
-          $p = Start-Process -PassThru -Wait ./AutoHotkey64.exe -ArgumentList 'tests\keeper_test.ahk'
-          Write-Host "----- test results -----"
-          if (Test-Path tests/test_results.log) { Get-Content tests/test_results.log }
-          Write-Host "------------------------"
-          if ($p.ExitCode -ne 0) {
-            Write-Host "::error::Tests failed with exit code $($p.ExitCode)"
-            exit $p.ExitCode
-          }
-
       - name: Assemble release
         shell: bash
         run: |

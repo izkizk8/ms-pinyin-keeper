@@ -10,7 +10,6 @@ global APP_REPO    := "izkizk8/ms-pinyin-keeper"
 
 #Include utils\ini.ahk
 #Include utils\autostart.ahk
-#Include core\ime.ahk
 #Include core\keeper.ahk
 #Include core\tray.ahk
 #Include update\updater.ahk

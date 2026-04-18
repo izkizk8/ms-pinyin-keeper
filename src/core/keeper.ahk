@@ -1,95 +1,68 @@
 ; ============================================================================
-; Keeper — globally remember EN/CN mode across window switches
+; Keeper — global EN/CN memory for Microsoft Pinyin
 ;
-; Strategy: poll the foreground window every ~120ms. If its IME's NATIVE
-; bit (CN vs EN) doesn't match the user's last explicit choice, force it
-; back. We try two methods in order:
-;   1. WM_IME_CONTROL / IMC_SETCONVERSIONMODE  (silent, IMM API)
-;   2. SendInput "{LShift}"                    (real keystroke fallback)
-; The user's choice is captured whenever they press Shift themselves.
+; Premise: Microsoft Pinyin resets to CN on every window focus change.
+; We track the user's last-chosen mode in a single boolean (g_DesiredEN)
+; and, on every focus change, send a real {LShift} if needed to flip
+; the new window from Pinyin's just-applied CN back to EN.
+;
+; No IME state reading — that path doesn't work for TSF Pinyin and was
+; the source of all earlier bugs. The model is: user toggles via Shift,
+; we mirror that toggle, and re-apply it whenever focus changes.
 ; ============================================================================
 
-global g_DesiredMode         := ""    ; "" = unset, otherwise raw IME mode int
-global g_PrevHwnd            := 0
-global g_KeeperRunning       := true
-global g_LastInternalSendMs  := 0
+global g_DesiredEN          := false   ; true = English, false = Chinese
+global g_KeeperRunning      := true
+global g_PrevHwnd           := 0
+global g_LastInternalSendMs := 0
 
 KeeperInit() {
-    Hotkey("~LShift", KeeperOnShift)
-    Hotkey("~RShift", KeeperOnShift)
-    SetTimer(KeeperTick, 120)
+    global g_DesiredEN, g_PrevHwnd
+    g_DesiredEN := (ConfigGet("desired_en", "0") = "1")
+    try g_PrevHwnd := WinGetID("A")
+
+    Hotkey("~LShift", KeeperOnUserShift)
+    Hotkey("~RShift", KeeperOnUserShift)
+    SetTimer(KeeperWatchFocus, 100)
+    KeeperLog("init: desired=" . (g_DesiredEN ? "EN" : "CN"))
 }
 
-KeeperOnShift(*) {
-    SetTimer(KeeperCaptureNow, -130)
-}
-
-KeeperCaptureNow() {
-    global g_DesiredMode, g_KeeperRunning, g_LastInternalSendMs
+; The user pressed Shift themselves -> they toggled the IME.
+; AHK's hook ignores its own SendInput, so this only fires for real keys.
+KeeperOnUserShift(*) {
+    global g_DesiredEN, g_KeeperRunning, g_LastInternalSendMs
     if !g_KeeperRunning
         return
-    ; Ignore captures right after our own internal Send Shift — that key was
-    ; simulated by us, not chosen by the user.
-    if (A_TickCount - g_LastInternalSendMs < 350)
+    ; Belt-and-suspenders: also ignore a brief window after our own send.
+    if (A_TickCount - g_LastInternalSendMs < 250)
+        return
+    g_DesiredEN := !g_DesiredEN
+    ConfigSet("desired_en", g_DesiredEN ? "1" : "0")
+    KeeperLog("user toggled -> " . (g_DesiredEN ? "EN" : "CN"))
+}
+
+KeeperWatchFocus() {
+    global g_PrevHwnd, g_DesiredEN, g_KeeperRunning, g_LastInternalSendMs
+    if !g_KeeperRunning
         return
     hwnd := 0
     try hwnd := WinGetID("A")
-    raw := GetIMEModeRaw(hwnd)
-    if (raw != -1) {
-        old := g_DesiredMode
-        g_DesiredMode := raw
-        KeeperLog("user shift: hwnd=" . hwnd . " mode=" . raw . " (was " . old . ")")
+    if (!hwnd || hwnd = g_PrevHwnd)
+        return
+    g_PrevHwnd := hwnd
+    KeeperLog("focus -> " . hwnd . " (" . KeeperWinTitle(hwnd) . "); desired=" . (g_DesiredEN ? "EN" : "CN"))
+    ; Pinyin just reset this new window to CN. If we want EN, flip it.
+    if g_DesiredEN {
+        g_LastInternalSendMs := A_TickCount
+        try Send("{Blind}{LShift}")
+        KeeperLog("  sent Shift to restore EN")
     }
 }
 
-KeeperTick() {
-    global g_PrevHwnd, g_DesiredMode, g_KeeperRunning, g_LastInternalSendMs
-    if !g_KeeperRunning
-        return
-    hwnd := 0
-    try hwnd := WinGetID("A")
-    if !hwnd
-        return
-    focusChanged := (hwnd != g_PrevHwnd)
-    g_PrevHwnd := hwnd
-    if (g_DesiredMode = "")
-        return
-    cur := GetIMEModeRaw(hwnd)
-    if (cur = -1)
-        return
-    if !KeeperNeedsCorrection(cur, g_DesiredMode)
-        return
-
-    newMode := KeeperComputeNewMode(cur, g_DesiredMode)
-    if focusChanged
-        KeeperLog("focus changed -> " . hwnd . "; correcting " . cur . " -> " . newMode)
-
-    ; --- Attempt 1: silent IME mode write -----------------------------------
-    SetIMEModeRaw(hwnd, newMode)
-    Sleep(25)
-    cur2 := GetIMEModeRaw(hwnd)
-    if (cur2 != -1 && !KeeperNeedsCorrection(cur2, g_DesiredMode))
-        return
-
-    ; --- Attempt 2: simulate Shift (user-equivalent toggle) -----------------
-    KeeperLog("WM_IME_CONTROL ineffective (cur2=" . cur2 . "); falling back to Send Shift")
-    g_LastInternalSendMs := A_TickCount
-    try Send("{Blind}{LShift}")
-    Sleep(40)
-    cur3 := GetIMEModeRaw(hwnd)
-    KeeperLog("after Shift: cur3=" . cur3)
-}
-
-; Pure: does the current raw mode disagree with desired on the NATIVE bit?
-KeeperNeedsCorrection(cur, desired) {
-    return (!(cur & 1)) != (!(desired & 1))
-}
-
-; Pure: compute the mode to write back (preserves cur's non-NATIVE bits).
-KeeperComputeNewMode(cur, desired) {
-    if !KeeperNeedsCorrection(cur, desired)
-        return cur
-    return (desired & 1) ? (cur | 1) : (cur & ~1)
+KeeperWinTitle(hwnd) {
+    t := ""
+    try t := WinGetTitle("ahk_id " . hwnd)
+    return SubStr(t, 1, 60)
 }
 
 KeeperToggle() {
@@ -104,17 +77,24 @@ KeeperIsRunning() {
     return g_KeeperRunning
 }
 
-; Reset desired mode (forget last user choice). Used after toggling debug etc.
-KeeperResetDesired() {
-    global g_DesiredMode
-    g_DesiredMode := ""
+KeeperGetDesired() {
+    global g_DesiredEN
+    return g_DesiredEN
+}
+
+; Manual override: tray menu can let user resync without pressing Shift.
+KeeperSetDesired(en) {
+    global g_DesiredEN
+    g_DesiredEN := !!en
+    ConfigSet("desired_en", g_DesiredEN ? "1" : "0")
+    KeeperLog("desired set to " . (g_DesiredEN ? "EN" : "CN") . " (manual)")
 }
 
 KeeperLog(msg) {
-    static path := EnvGet("LOCALAPPDATA") . "\ms-pinyin-keeper\debug.log"
     if (ConfigGet("debug", "0") != "1")
         return
-    try FileAppend(FormatTime(, "yyyy-MM-dd HH:mm:ss") . " " . msg . "`n", path, "UTF-8")
+    try FileAppend(FormatTime(, "yyyy-MM-dd HH:mm:ss") . " " . msg . "`n",
+        KeeperLogPath(), "UTF-8")
 }
 
 KeeperLogPath() {
