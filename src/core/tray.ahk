@@ -22,6 +22,11 @@ TrayInit() {
         M.Check("Auto check for updates")
     M.Add("Check for updates now", (*) => UpdaterCheckManual())
     M.Add()
+    M.Add("Debug log", (*) => TrayToggleDebug())
+    if (ConfigGet("debug", "0") = "1")
+        M.Check("Debug log")
+    M.Add("Open debug log folder", (*) => TrayOpenLogFolder())
+    M.Add()
     M.Add("About", (*) => TrayAbout())
     M.Add("Exit", (*) => ExitApp())
 
@@ -82,6 +87,27 @@ TrayToggleAutoUpdate() {
         A_TrayMenu.Check("Auto check for updates")
     else
         A_TrayMenu.Uncheck("Auto check for updates")
+}
+
+TrayToggleDebug() {
+    global APP_NAME
+    cur := ConfigGet("debug", "0") = "1"
+    new := !cur
+    ConfigSet("debug", new ? "1" : "0")
+    if new {
+        A_TrayMenu.Check("Debug log")
+        try TrayTip("Debug log enabled`n" . KeeperLogPath(), APP_NAME, 0x10)
+    } else {
+        A_TrayMenu.Uncheck("Debug log")
+        try TrayTip("Debug log disabled", APP_NAME, 0x10)
+    }
+}
+
+TrayOpenLogFolder() {
+    folder := EnvGet("LOCALAPPDATA") . "\ms-pinyin-keeper"
+    if !DirExist(folder)
+        DirCreate(folder)
+    try Run('explorer.exe "' . folder . '"')
 }
 
 TrayAbout() {
